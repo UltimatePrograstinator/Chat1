@@ -3,161 +3,150 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SupaChat: Invite-Only Rooms</title>
+    <title>SupaChat</title>
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
-    <div id="auth-screen" class="container screen">
-        <div class="card center-card">
-            <h2>👋 Choose a Username</h2>
-            <p>Claim your name. This device will remember you permanently.</p>
-            <div class="input-group">
-                <input type="text" id="username-input" placeholder="Enter unique username..." maxlength="15">
-                <button onclick="registerUsername()">Claim Name</button>
+    <div id="auth-screen" class="screen hidden">
+        <div class="auth-box">
+            <h1>👋 Welcome to SupaChat</h1>
+            <p>Choose a unique username to get started.</p>
+            <div class="input-row">
+                <input type="text" id="username-input" placeholder="Enter username..." maxlength="15">
+                <button onclick="registerUsername()">Join</button>
             </div>
             <p id="auth-error" class="error-text"></p>
         </div>
     </div>
 
-    <div id="app-screen" class="container screen hidden">
-        <header class="app-header">
-            <div>
-                <h2>SupaChat Dashboard</h2>
-                <p>Logged in as: <strong id="display-my-username" style="color: #3b82f6;"></strong></p>
+    <div id="app-screen" class="app-layout screen hidden">
+        
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h3>SupaChat</h3>
+                <span id="display-my-username"></span>
             </div>
-        </header>
+            <div class="sidebar-content">
+                <h4>Create Group</h4>
+                <input type="text" id="new-room-name" placeholder="Group Name...">
+                <button class="btn-block" onclick="createNewGroup()">+ New Group</button>
+                <p id="group-error" class="error-text"></p>
+            </div>
+        </aside>
 
-        <div class="dashboard-grid">
-            <div class="sidebar">
-                <div class="card">
-                    <h3>Create Private Group</h3>
-                    <input type="text" id="new-room-name" placeholder="Group Name (e.g., Gamers)">
-                    <input type="text" id="invite-users" placeholder="Invite users (comma separated: alex, sam)">
-                    <button class="btn-block" onclick="createNewGroup()">Create & Invite</button>
-                    <p id="group-error" class="error-text"></p>
-                </div>
-
-                <div class="card">
-                    <h3>Your Active Rooms</h3>
-                    <ul id="rooms-list" class="list-container">
-                        </ul>
-                </div>
+        <main class="main-content">
+            
+            <div id="home-view" class="view-panel">
+                <h2>Your Group Chats</h2>
+                <p class="subtitle">Select a conversation or create a new one to begin.</p>
+                <ul id="rooms-list" class="rooms-grid">
+                    </ul>
             </div>
 
-            <div class="main-chat">
-                <div class="card chat-card">
-                    <h3 id="active-room-header">Select a room to start talking</h3>
-                    <div id="chat-window">
-                        <p class="system-msg">No active room selected.</p>
+            <div id="chat-view" class="view-panel hidden">
+                <header class="chat-header">
+                    <div class="chat-meta">
+                        <button class="back-btn" onclick="showHomeView()">← Back</button>
+                        <h2 id="active-room-header"># Group Name</h2>
                     </div>
-                    <div class="input-group">
-                        <input type="text" id="message-input" placeholder="Type a secure message..." disabled>
-                        <button id="send-btn" onclick="sendMessage()" disabled>Send</button>
+                    <div class="add-user-area">
+                        <input type="text" id="invite-username" placeholder="Friend's username...">
+                        <button onclick="addFriendToGroup()">Add Member</button>
                     </div>
+                </header>
+
+                <div id="chat-window">
+                    </div>
+
+                <div class="chat-input-bar">
+                    <input type="text" id="message-input" placeholder="Type a message...">
+                    <button onclick="sendMessage()">Send</button>
                 </div>
             </div>
-        </div>
+
+        </main>
     </div>
 
     <script>
-        // Initialize Supabase configuration credentials with your live keys
         const SUPABASE_URL = "https://ymyufknfzseedkkqoprt.supabase.co"; 
         const SUPABASE_ANON_KEY = "sb_publishable_6sADHUhmDUd3y0ScQdp0IQ_M7VbJ-8p";
-        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const supabase = Supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         let myUsername = localStorage.getItem("chat_username");
         let currentRoomId = null;
         let currentRoomName = null;
+        let currentAllowedUsers = [];
 
-        // Run application setup rules on page boot
         window.onload = function() {
             if (myUsername) {
-                showAppScreen();
+                initApp();
             } else {
                 document.getElementById("auth-screen").classList.remove("hidden");
             }
         };
 
-        // Screen toggling utility helper
-        function showAppScreen() {
+        function initApp() {
             document.getElementById("auth-screen").classList.add("hidden");
             document.getElementById("app-screen").classList.remove("hidden");
-            document.getElementById("display-my-username").innerText = myUsername;
-            loadMyRooms();
+            document.getElementById("display-my-username").innerText = `@${myUsername}`;
+            showHomeView();
             listenToGlobalRealtime();
         }
 
-        // --- USER REGISTRATION ENGINE ---
+        function showHomeView() {
+            currentRoomId = null;
+            document.getElementById("chat-view").classList.add("hidden");
+            document.getElementById("home-view").classList.remove("hidden");
+            loadMyRooms();
+        }
+
+        // --- AUTH ENGINE ---
         async function registerUsername() {
             const input = document.getElementById("username-input");
             const errorText = document.getElementById("auth-error");
             const username = input.value.trim().toLowerCase();
 
-            if (!username) return alert("Please enter a username.");
-
+            if (!username) return alert("Username cannot be empty.");
             errorText.innerText = "Checking availability...";
 
-            // Check if the username row exists in Supabase
-            const { data, error } = await supabase
-                .from('usernames')
-                .select('username')
-                .eq('username', username);
-
+            const { data, error } = await supabase.from('usernames').select('username').eq('username', username);
             if (error) return errorText.innerText = "Database connection error.";
 
             if (data.length > 0) {
-                errorText.innerText = "⚠️ Username already taken! Choose another.";
+                errorText.innerText = "⚠️ That username is taken!";
             } else {
-                // If unique, insert into DB array profile
-                const { error: insertError } = await supabase
-                    .from('usernames')
-                    .insert([{ username: username }]);
-
+                const { error: insertError } = await supabase.from('usernames').insert([{ username: username }]);
                 if (insertError) return errorText.innerText = "Registration failed.";
 
-                // Permanently lock into this browser's engine memory
                 localStorage.setItem("chat_username", username);
                 myUsername = username;
-                showAppScreen();
+                initApp();
             }
         }
 
-        // --- GROUP CHAT & INVITATION ENGINE ---
+        // --- GROUP LOGIC ---
         async function createNewGroup() {
             const roomInput = document.getElementById("new-room-name");
-            const inviteInput = document.getElementById("invite-users");
             const errorText = document.getElementById("group-error");
-
             const roomName = roomInput.value.trim();
-            const inviteesRaw = inviteInput.value.trim().toLowerCase();
 
-            if (!roomName) return alert("Enter a group chat name.");
+            if (!roomName) return alert("Enter a group name.");
 
-            // Parse invite input string into an array, adding yourself automatically
-            let allowedArray = [myUsername];
-            if (inviteesRaw) {
-                const cleanInvitees = inviteesRaw.split(',').map(name => name.trim()).filter(name => name !== "");
-                allowedArray = [...allowedArray, ...cleanInvitees];
-            }
-
-            // Insert into Supabase table framework
             const { error } = await supabase
                 .from('group_chats')
-                .insert([{ room_name: roomName, allowed_users: allowedArray }]);
+                .insert([{ room_name: roomName, allowed_users: [myUsername] }]);
 
             if (error) {
                 errorText.innerText = "Group name already exists.";
             } else {
                 roomInput.value = "";
-                inviteInput.value = "";
                 errorText.innerText = "";
                 loadMyRooms();
             }
         }
 
-        // Load rooms where you are on the invitation list array
         async function loadMyRooms() {
             const { data, error } = await supabase
                 .from('group_chats')
@@ -170,42 +159,67 @@
             list.innerHTML = "";
 
             data.forEach(room => {
-                const li = document.createElement("li");
-                li.innerText = `# ${room.room_name}`;
-                li.onclick = () => selectRoom(room.id, room.room_name);
-                if (currentRoomId === room.id) li.classList.add("active-item");
-                list.appendChild(li);
+                const card = document.createElement("li");
+                card.className = "room-card";
+                card.innerHTML = `
+                    <h3>💬 ${room.room_name}</h3>
+                    <p>${room.allowed_users.length} members</p>
+                `;
+                card.onclick = () => openChatRoom(room);
+                list.appendChild(card);
             });
         }
 
-        // --- CHAT LOGICS ---
-        function selectRoom(id, name) {
-            currentRoomId = id;
-            currentRoomName = name;
-            document.getElementById("active-room-header").innerText = `💬 Group: ${name}`;
-            document.getElementById("message-input").disabled = false;
-            document.getElementById("send-btn").disabled = false;
-            
-            // Re-render highlight state on list items
-            loadMyRooms();
+        function openChatRoom(room) {
+            currentRoomId = room.id;
+            currentRoomName = room.room_name;
+            currentAllowedUsers = room.allowed_users;
 
+            document.getElementById("home-view").classList.add("hidden");
+            document.getElementById("chat-view").classList.remove("hidden");
+            document.getElementById("active-room-header").innerText = `# ${room.room_name}`;
+            
             const win = document.getElementById("chat-window");
-            win.innerHTML = `<p class="system-msg text-green">Connected securely to room "${name}".</p>`;
+            win.innerHTML = `<p class="system-msg">Secure chat history initialized for ${room.room_name}.</p>`;
         }
 
-        // Real-time listener for database updates
+        // --- ADD PEOPLE INNER BUTTON ---
+        async function addFriendToGroup() {
+            const input = document.getElementById("invite-username");
+            const friendName = input.value.trim().toLowerCase();
+
+            if (!friendName) return alert("Type a username to add.");
+            if (currentAllowedUsers.includes(friendName)) return alert("User is already in this group!");
+
+            // Check if friend actually exists
+            const { data, error } = await supabase.from('usernames').select('username').eq('username', friendName);
+            if (error || data.length === 0) return alert("User does not exist. Tell them to sign up first!");
+
+            // Append user to database array list
+            const updatedUsers = [...currentAllowedUsers, friendName];
+
+            const { error: updateError } = await supabase
+                .from('group_chats')
+                .update({ allowed_users: updatedUsers })
+                .eq('id', currentRoomId);
+
+            if (updateError) {
+                alert("Failed to add member.");
+            } else {
+                currentAllowedUsers = updatedUsers;
+                input.value = "";
+                alert(`Added @${friendName} successfully!`);
+            }
+        }
+
         function listenToGlobalRealtime() {
             supabase
                 .channel('schema-db-changes')
-                .on(
-                    'postgres_changes',
-                    { event: 'INSERT', schema: 'public', table: 'group_chats' },
-                    (payload) => {
-                        if (payload.new.allowed_users.includes(myUsername)) {
-                            loadMyRooms();
-                        }
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'group_chats' }, () => {
+                    if (currentRoomId === null) {
+                        loadMyRooms();
                     }
-                )
+                })
                 .subscribe();
         }
 
@@ -216,8 +230,8 @@
 
             const win = document.getElementById("chat-window");
             const msgDiv = document.createElement("div");
-            msgDiv.classList.add("msg-bubble");
-            msgDiv.innerHTML = `<span class="msg-author">You</span><p class="msg-text">${text}</p>`;
+            msgDiv.className = "msg-row current-user-msg";
+            msgDiv.innerHTML = `<div class="msg-bubble"><span class="msg-author">You</span><p>${text}</p></div>`;
             win.appendChild(msgDiv);
             win.scrollTop = win.scrollHeight;
             input.value = "";
