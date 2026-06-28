@@ -3,115 +3,225 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Private Chatroom</title>
+    <title>SupaChat: Invite-Only Rooms</title>
     <link rel="stylesheet" href="styles.css">
-    <script src="https://cdn.pubnub.com/sdk/javascript/pubnub.11.0.2.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
-    <div class="container">
-        <header>
-            <h2>🔒 Private Rooms</h2>
-            <p>Secure, real-time messaging powered by PubNub.</p>
-        </header>
-        
-        <section class="card">
-            <h3>1. Setup Your Secret Room</h3>
+    <div id="auth-screen" class="container screen">
+        <div class="card center-card">
+            <h2>👋 Choose a Username</h2>
+            <p>Claim your name. This device will remember you permanently.</p>
             <div class="input-group">
-                <input type="text" id="room-input" placeholder="e.g., secret-lounge-77">
-                <button onclick="connectToRoom()">Connect</button>
+                <input type="text" id="username-input" placeholder="Enter unique username..." maxlength="15">
+                <button onclick="registerUsername()">Claim Name</button>
             </div>
-            <div class="status-wrapper">
-                <span class="status-dot" id="status-dot"></span>
-                <span id="status-text">Not connected to any room</span>
-            </div>
-        </section>
+            <p id="auth-error" class="error-text"></p>
+        </div>
+    </div>
 
-        <section class="card chat-card">
-            <h3>2. Live Conversation</h3>
-            <div id="chat-window">
-                <p class="system-msg">Enter a secret room name above to start chatting securely.</p>
+    <div id="app-screen" class="container screen hidden">
+        <header class="app-header">
+            <div>
+                <h2>SupaChat Dashboard</h2>
+                <p>Logged in as: <strong id="display-my-username" style="color: #3b82f6;"></strong></p>
             </div>
-            <div class="input-group chat-controls">
-                <input type="text" id="username" placeholder="Your Alias" maxlength="12">
-                <input type="text" id="message" placeholder="Type a message..." disabled>
-                <button id="send-btn" onclick="sendChat()" disabled>Send</button>
+        </header>
+
+        <div class="dashboard-grid">
+            <div class="sidebar">
+                <div class="card">
+                    <h3>Create Private Group</h3>
+                    <input type="text" id="new-room-name" placeholder="Group Name (e.g., Gamers)">
+                    <input type="text" id="invite-users" placeholder="Invite users (comma separated: alex, sam)">
+                    <button class="btn-block" onclick="createNewGroup()">Create & Invite</button>
+                    <p id="group-error" class="error-text"></p>
+                </div>
+
+                <div class="card">
+                    <h3>Your Active Rooms</h3>
+                    <ul id="rooms-list" class="list-container">
+                        </ul>
+                </div>
             </div>
-        </section>
+
+            <div class="main-chat">
+                <div class="card chat-card">
+                    <h3 id="active-room-header">Select a room to start talking</h3>
+                    <div id="chat-window">
+                        <p class="system-msg">No active room selected.</p>
+                    </div>
+                    <div class="input-group">
+                        <input type="text" id="message-input" placeholder="Type a secure message..." disabled>
+                        <button id="send-btn" onclick="sendMessage()" disabled>Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
-        let pubnub = null;
-        let currentChannel = null;
+        // Initialize Supabase configuration credentials with your live keys
+        const SUPABASE_URL = "https://ymyufknfzseedkkqoprt.supabase.co"; 
+        const SUPABASE_ANON_KEY = "sb_publishable_6sADHUhmDUd3y0ScQdp0IQ_M7VbJ-8p";
+        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-        function connectToRoom() {
-            const roomName = document.getElementById("room-input").value.trim();
-            if (!roomName) return alert("Please type a room name first!");
+        let myUsername = localStorage.getItem("chat_username");
+        let currentRoomId = null;
+        let currentRoomName = null;
 
-            // If already connected to a room, drop subscription first
-            if (pubnub && currentChannel) {
-                pubnub.unsubscribe({ channels: [currentChannel] });
+        // Run application setup rules on page boot
+        window.onload = function() {
+            if (myUsername) {
+                showAppScreen();
+            } else {
+                document.getElementById("auth-screen").classList.remove("hidden");
+            }
+        };
+
+        // Screen toggling utility helper
+        function showAppScreen() {
+            document.getElementById("auth-screen").classList.add("hidden");
+            document.getElementById("app-screen").classList.remove("hidden");
+            document.getElementById("display-my-username").innerText = myUsername;
+            loadMyRooms();
+            listenToGlobalRealtime();
+        }
+
+        // --- USER REGISTRATION ENGINE ---
+        async function registerUsername() {
+            const input = document.getElementById("username-input");
+            const errorText = document.getElementById("auth-error");
+            const username = input.value.trim().toLowerCase();
+
+            if (!username) return alert("Please enter a username.");
+
+            errorText.innerText = "Checking availability...";
+
+            // Check if the username row exists in Supabase
+            const { data, error } = await supabase
+                .from('usernames')
+                .select('username')
+                .eq('username', username);
+
+            if (error) return errorText.innerText = "Database connection error.";
+
+            if (data.length > 0) {
+                errorText.innerText = "⚠️ Username already taken! Choose another.";
+            } else {
+                // If unique, insert into DB array profile
+                const { error: insertError } = await supabase
+                    .from('usernames')
+                    .insert([{ username: username }]);
+
+                if (insertError) return errorText.innerText = "Registration failed.";
+
+                // Permanently lock into this browser's engine memory
+                localStorage.setItem("chat_username", username);
+                myUsername = username;
+                showAppScreen();
+            }
+        }
+
+        // --- GROUP CHAT & INVITATION ENGINE ---
+        async function createNewGroup() {
+            const roomInput = document.getElementById("new-room-name");
+            const inviteInput = document.getElementById("invite-users");
+            const errorText = document.getElementById("group-error");
+
+            const roomName = roomInput.value.trim();
+            const inviteesRaw = inviteInput.value.trim().toLowerCase();
+
+            if (!roomName) return alert("Enter a group chat name.");
+
+            // Parse invite input string into an array, adding yourself automatically
+            let allowedArray = [myUsername];
+            if (inviteesRaw) {
+                const cleanInvitees = inviteesRaw.split(',').map(name => name.trim()).filter(name => name !== "");
+                allowedArray = [...allowedArray, ...cleanInvitees];
             }
 
-            currentChannel = roomName;
+            // Insert into Supabase table framework
+            const { error } = await supabase
+                .from('group_chats')
+                .insert([{ room_name: roomName, allowed_users: allowedArray }]);
 
-            // Initialize PubNub client with your unique keys
-            pubnub = new PubNub({
-                publishKey: "pub-c-d1e10604-b39e-442e-891d-789b3b6c6bf6", 
-                subscribeKey: "sub-c-a82f38b7-b8b1-4226-9bd4-abae3e698854",
-                userId: "user_" + Math.random().toString(36).substring(2, 9)
+            if (error) {
+                errorText.innerText = "Group name already exists.";
+            } else {
+                roomInput.value = "";
+                inviteInput.value = "";
+                errorText.innerText = "";
+                loadMyRooms();
+            }
+        }
+
+        // Load rooms where you are on the invitation list array
+        async function loadMyRooms() {
+            const { data, error } = await supabase
+                .from('group_chats')
+                .select('*')
+                .contains('allowed_users', [myUsername]);
+
+            if (error) return;
+
+            const list = document.getElementById("rooms-list");
+            list.innerHTML = "";
+
+            data.forEach(room => {
+                const li = document.createElement("li");
+                li.innerText = `# ${room.room_name}`;
+                li.onclick = () => selectRoom(room.id, room.room_name);
+                if (currentRoomId === room.id) li.classList.add("active-item");
+                list.appendChild(li);
             });
+        }
 
-            // Set up event framework for message ingestion
-            pubnub.addListener({
-                message: function(event) {
-                    const chatWindow = document.getElementById("chat-window");
-                    const msgDiv = document.createElement("div");
-                    msgDiv.classList.add("msg-bubble");
-                    
-                    msgDiv.innerHTML = `<span class="msg-author">${event.message.name}</span><p class="msg-text">${event.message.text}</p>`;
-                    chatWindow.appendChild(msgDiv);
-                    chatWindow.scrollTop = chatWindow.scrollHeight;
-                }
-            });
-
-            // Open stream channel
-            pubnub.subscribe({
-                channels: [currentChannel]
-            });
-
-            // Update user interface status hooks
-            document.getElementById("status-text").innerText = `Connected to room: ${currentChannel}`;
-            document.getElementById("status-dot").classList.add("online");
-            document.getElementById("message").disabled = false;
+        // --- CHAT LOGICS ---
+        function selectRoom(id, name) {
+            currentRoomId = id;
+            currentRoomName = name;
+            document.getElementById("active-room-header").innerText = `💬 Group: ${name}`;
+            document.getElementById("message-input").disabled = false;
             document.getElementById("send-btn").disabled = false;
             
-            const chatWindow = document.getElementById("chat-window");
-            chatWindow.innerHTML = `<p class="system-msg yellow">Switched to channel: "${currentChannel}". Give this exact name to your friend to join!</p>`;
+            // Re-render highlight state on list items
+            loadMyRooms();
+
+            const win = document.getElementById("chat-window");
+            win.innerHTML = `<p class="system-msg text-green">Connected securely to room "${name}".</p>`;
         }
 
-        function sendChat() {
-            const nameInput = document.getElementById("username");
-            const msgInput = document.getElementById("message");
-
-            const name = nameInput.value.trim() || "Anonymous";
-            const text = msgInput.value.trim();
-
-            if (text !== "" && pubnub && currentChannel) {
-                pubnub.publish({
-                    channel: currentChannel,
-                    message: { name: name, text: text }
-                });
-                msgInput.value = "";
-            }
+        // Real-time listener for database updates
+        function listenToGlobalRealtime() {
+            supabase
+                .channel('schema-db-changes')
+                .on(
+                    'postgres_changes',
+                    { event: 'INSERT', schema: 'public', table: 'group_chats' },
+                    (payload) => {
+                        if (payload.new.allowed_users.includes(myUsername)) {
+                            loadMyRooms();
+                        }
+                    }
+                )
+                .subscribe();
         }
 
-        // Send message on Enter key press
-        document.getElementById("message").addEventListener("keypress", function(event) {
-            if (event.key === "Enter") {
-                sendChat();
-            }
-        });
+        function sendMessage() {
+            const input = document.getElementById("message-input");
+            const text = input.value.trim();
+            if (!text) return;
+
+            const win = document.getElementById("chat-window");
+            const msgDiv = document.createElement("div");
+            msgDiv.classList.add("msg-bubble");
+            msgDiv.innerHTML = `<span class="msg-author">You</span><p class="msg-text">${text}</p>`;
+            win.appendChild(msgDiv);
+            win.scrollTop = win.scrollHeight;
+            input.value = "";
+        }
     </script>
 </body>
 </html>
