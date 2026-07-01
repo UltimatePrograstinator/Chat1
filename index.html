@@ -70,10 +70,9 @@
     </div>
 
     <script>
-        // FIXED: Capitalized "Supabase.createClient" on line 91 below
         const SUPABASE_URL = "https://ymyufknfzseedkkqoprt.supabase.co"; 
         const SUPABASE_ANON_KEY = "sb_publishable_6sADHUhmDUd3y0ScQdp0IQ_M7VbJ-8p";
-        const supabase = Supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const supabaseClient = Supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         let myUsername = localStorage.getItem("chat_username");
         let currentRoomId = null;
@@ -112,13 +111,13 @@
             if (!username) return alert("Username cannot be empty.");
             errorText.innerText = "Checking availability...";
 
-            const { data, error } = await supabase.from('usernames').select('username').eq('username', username);
+            const { data, error } = await supabaseClient.from('usernames').select('username').eq('username', username);
             if (error) return errorText.innerText = "Database connection error.";
 
             if (data.length > 0) {
                 errorText.innerText = "⚠️ That username is taken!";
             } else {
-                const { error: insertError } = await supabase.from('usernames').insert([{ username: username }]);
+                const { error: insertError } = await supabaseClient.from('usernames').insert([{ username: username }]);
                 if (insertError) return errorText.innerText = "Registration failed.";
 
                 localStorage.setItem("chat_username", username);
@@ -135,7 +134,7 @@
 
             if (!roomName) return alert("Enter a group name.");
 
-            const { error } = await supabase
+            const { error } = await supabaseClient
                 .from('group_chats')
                 .insert([{ room_name: roomName, allowed_users: [myUsername] }]);
 
@@ -149,7 +148,7 @@
         }
 
         async function loadMyRooms() {
-            const { data, error } = await supabase
+            const { data, error } = await supabaseClient
                 .from('group_chats')
                 .select('*')
                 .contains('allowed_users', [myUsername]);
@@ -193,13 +192,13 @@
             if (currentAllowedUsers.includes(friendName)) return alert("User is already in this group!");
 
             // Check if friend actually exists
-            const { data, error } = await supabase.from('usernames').select('username').eq('username', friendName);
+            const { data, error } = await supabaseClient.from('usernames').select('username').eq('username', friendName);
             if (error || data.length === 0) return alert("User does not exist. Tell them to sign up first!");
 
             // Append user to database array list
             const updatedUsers = [...currentAllowedUsers, friendName];
 
-            const { error: updateError } = await supabase
+            const { error: updateError } = await supabaseClient
                 .from('group_chats')
                 .update({ allowed_users: updatedUsers })
                 .eq('id', currentRoomId);
@@ -214,7 +213,7 @@
         }
 
         function listenToGlobalRealtime() {
-            supabase
+            supabaseClient
                 .channel('schema-db-changes')
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'group_chats' }, () => {
                     if (currentRoomId === null) {
