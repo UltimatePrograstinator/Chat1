@@ -72,14 +72,20 @@
     <script>
         const SUPABASE_URL = "https://ymyufknfzseedkkqoprt.supabase.co"; 
         const SUPABASE_ANON_KEY = "sb_publishable_6sADHUhmDUd3y0ScQdp0IQ_M7VbJ-8p";
-        const supabaseClient = Supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        
+        // Define variable placeholder globally
+        let supabaseClient;
 
         let myUsername = localStorage.getItem("chat_username");
         let currentRoomId = null;
         let currentRoomName = null;
         let currentAllowedUsers = [];
 
+        // FIXED: Safe initialization sequence starts ONLY after page finishes full script loading
         window.onload = function() {
+            // Safely attach to the Supabase library asset now that it is defined
+            supabaseClient = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : Supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            
             if (myUsername) {
                 initApp();
             } else {
@@ -102,7 +108,6 @@
             loadMyRooms();
         }
 
-        // --- AUTH ENGINE ---
         async function registerUsername() {
             const input = document.getElementById("username-input");
             const errorText = document.getElementById("auth-error");
@@ -126,7 +131,6 @@
             }
         }
 
-        // --- GROUP LOGIC ---
         async function createNewGroup() {
             const roomInput = document.getElementById("new-room-name");
             const errorText = document.getElementById("group-error");
@@ -183,7 +187,6 @@
             win.innerHTML = `<p class="system-msg">Secure chat history initialized for ${room.room_name}.</p>`;
         }
 
-        // --- ADD PEOPLE INNER BUTTON ---
         async function addFriendToGroup() {
             const input = document.getElementById("invite-username");
             const friendName = input.value.trim().toLowerCase();
@@ -191,11 +194,9 @@
             if (!friendName) return alert("Type a username to add.");
             if (currentAllowedUsers.includes(friendName)) return alert("User is already in this group!");
 
-            // Check if friend actually exists
             const { data, error } = await supabaseClient.from('usernames').select('username').eq('username', friendName);
             if (error || data.length === 0) return alert("User does not exist. Tell them to sign up first!");
 
-            // Append user to database array list
             const updatedUsers = [...currentAllowedUsers, friendName];
 
             const { error: updateError } = await supabaseClient
